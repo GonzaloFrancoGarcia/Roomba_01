@@ -8,14 +8,7 @@ pygame.init()
 # Dimensiones de la pantalla
 WIDTH, HEIGHT = 600, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Simulación de Roomba")
-
-# Colores
-WHITE = (255, 255, 255)
-BLUE = (0, 100, 255)
-GREEN = (0, 255, 100)
-RED = (255, 0, 0)
-BLACK = (0, 0, 0)
+pygame.display.set_caption("Bebé Roomba y Padre Roomba")
 
 # Definición de zonas de limpieza
 zonas = {
@@ -24,6 +17,10 @@ zonas = {
     'Zona 3': (100, 200, 250, 150),
     'Zona 4': (400, 300, 90, 220)
 }
+
+# Crear una superficie para almacenar las huellas del bebé
+huellas_superficie = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+huellas_superficie.fill((0, 0, 0, 0))  # Transparente
 
 # Crear una superficie para almacenar las áreas limpiadas
 zona_superficie = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -48,14 +45,18 @@ with concurrent.futures.ThreadPoolExecutor() as executor:
 superficie_total = sum(areas.values())
 tiempo_limpeza = superficie_total / tasa_limpeza
 
+time_limit = 30  # Tiempo límite antes de que llegue la madre
+time_remaining = time_limit
+
 # Clase Roomba
 class Roomba:
-    def __init__(self, x, y):
+    def __init__(self, x, y, color, leave_trail=False):
         self.x = x
         self.y = y
         self.radius = 15
-        self.color = RED
         self.speed = 3
+        self.color = color
+        self.leave_trail = leave_trail
         self.direction = [random.choice([-self.speed, self.speed]), random.choice([-self.speed, self.speed])]
         self.change_direction_timer = 0
     
@@ -74,21 +75,27 @@ class Roomba:
         if self.change_direction_timer > 100:
             self.direction = [random.choice([-self.speed, 0, self.speed]), random.choice([-self.speed, 0, self.speed])]
             self.change_direction_timer = 0
-            
-        # Detectar colisión con zonas y marcar la trayectoria de limpieza
-        pygame.draw.circle(zona_superficie, GREEN, (self.x, self.y), self.radius // 2)
+        
+        # Dejar huellas si es el bebé
+        if self.leave_trail:
+            pygame.draw.circle(huellas_superficie, (200, 100, 0, 150), (self.x, self.y), self.radius // 2)
+        
+        # Limpiar huellas si es el padre
+        if not self.leave_trail:
+            pygame.draw.circle(zona_superficie, (0, 0, 0, 0), (self.x, self.y), self.radius // 2)
     
     def draw(self, screen):
         pygame.draw.circle(screen, self.color, (self.x, self.y), self.radius)
 
-# Crear Roomba
-roomba = Roomba(WIDTH // 2, HEIGHT // 2)
+# Crear Roombas
+bebe_roomba = Roomba(WIDTH // 4, HEIGHT // 4, (255, 100, 100), leave_trail=True)
+padre_roomba = Roomba(WIDTH // 2, HEIGHT // 2, (100, 100, 255), leave_trail=False)
 
 # Bucle principal
 running = True
 clock = pygame.time.Clock()
 while running:
-    screen.fill(WHITE)
+    screen.fill((200, 200, 200))  # Fondo gris
     
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -96,14 +103,30 @@ while running:
     
     # Dibujar zonas
     for zona, (x, y, w, h) in zonas.items():
-        pygame.draw.rect(screen, BLUE, (x, y, w, h))
+        pygame.draw.rect(screen, (0, 100, 255, 150), (x, y, w, h))  # Semitransparente
     
-    # Dibujar superficie limpiada
+    # Dibujar huellas del bebé
+    screen.blit(huellas_superficie, (0, 0))
+    
+    # Mover y dibujar las Roombas
+    bebe_roomba.move()
+    bebe_roomba.draw(screen)
+    
+    padre_roomba.move()
+    padre_roomba.draw(screen)
+    
+    # Limpiar huellas al pasar el padre
     screen.blit(zona_superficie, (0, 0))
     
-    # Mover y dibujar la Roomba
-    roomba.move()
-    roomba.draw(screen)
+    # Actualizar el tiempo restante
+    time_remaining -= 1 / 60
+    font = pygame.font.Font(None, 36)
+    timer_text = font.render(f"Tiempo: {max(0, int(time_remaining))}s", True, (0, 0, 0))
+    screen.blit(timer_text, (10, 10))
+    
+    # Condición de fin de juego
+    if time_remaining <= 0:
+        running = False
     
     # Actualizar pantalla
     pygame.display.flip()
