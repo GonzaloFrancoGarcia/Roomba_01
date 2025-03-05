@@ -13,8 +13,8 @@ pygame.display.set_caption("Roomba Cat & Mouse")
 
 # Colores
 WHITE = (255, 255, 255)
-RED = (255, 0, 0)
-BLUE = (0, 0, 255)
+RED   = (255, 0, 0)
+BLUE  = (0, 0, 255)
 GREEN = (0, 255, 0)
 
 # Definición de las zonas con sus dimensiones (x, y, ancho, alto)
@@ -26,7 +26,7 @@ zones = {
     'Zona 5': (170, 250, 280, 180)  # Abajo medio
 }
 
-# Conexiones entre zonas
+# Conexiones entre zonas (pueden ser útiles para otros propósitos)
 zone_connections = {
     'Zona 1': ['Zona 2', 'Zona 4', 'Zona 5'],
     'Zona 2': ['Zona 1', 'Zona 3', 'Zona 5'],
@@ -49,11 +49,12 @@ def get_random_position():
         if is_inside_zone(x, y):
             return x, y
 
-# Algoritmo A* para encontrar la mejor ruta
+# Algoritmo A* para encontrar la mejor ruta (con tolerancia ya implementada)
 def astar(start, goal):
     def heuristic(a, b):
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
     
+    tolerance = 10  # Umbral para considerar que se ha alcanzado el objetivo
     open_set = []
     heapq.heappush(open_set, (0, start))
     came_from = {}
@@ -62,12 +63,16 @@ def astar(start, goal):
     
     while open_set:
         _, current = heapq.heappop(open_set)
-        if current == goal:
+        
+        # Si estamos lo suficientemente cerca del objetivo
+        if heuristic(current, goal) < tolerance:
             path = []
             while current in came_from:
                 path.append(current)
                 current = came_from[current]
-            return path[::-1]
+            path = path[::-1]
+            path.append(goal)  # Aseguramos que el camino finaliza en el objetivo
+            return path
         
         for dx, dy in [(10, 0), (-10, 0), (0, 10), (0, -10)]:
             neighbor = (current[0] + dx, current[1] + dy)
@@ -90,14 +95,42 @@ class Roomba:
         self.path = []
     
     def move_towards(self, target_x, target_y):
-        if not self.path:
-            self.path = astar((self.x, self.y), (target_x, target_y))
-        if self.path:
-            self.x, self.y = self.path.pop(0)
+        # Aplicamos aleatoriedad solo para el ratón (color RED)
+        if self.color == RED:
+            # Si no existe ya un camino calculado, lo calculamos con un objetivo modificado
+            if not self.path:
+                # Añadimos un offset aleatorio al objetivo para que no sea tan directo
+                offset_x = random.randint(-30, 30)
+                offset_y = random.randint(-30, 30)
+                new_target = (target_x + offset_x, target_y + offset_y)
+                # Verificamos que el nuevo objetivo esté dentro de alguna zona; si no, usamos el objetivo original.
+                if not is_inside_zone(new_target[0], new_target[1]):
+                    new_target = (target_x, target_y)
+                self.path = astar((self.x, self.y), new_target)
+            
+            # Con una probabilidad del 30% se realiza un movimiento aleatorio (desviación)
+            if self.path and random.random() < 0.3:
+                neighbors = [(10, 0), (-10, 0), (0, 10), (0, -10)]
+                random.shuffle(neighbors)
+                for dx, dy in neighbors:
+                    nx, ny = self.x + dx, self.y + dy
+                    if is_inside_zone(nx, ny):
+                        self.x, self.y = nx, ny
+                        self.path = []  # Se reinicia la ruta para recalcular en el siguiente paso
+                        return
+            if self.path:
+                self.x, self.y = self.path.pop(0)
+        else:
+            # Para otros personajes (por ejemplo, si quisiéramos modificar el comportamiento) 
+            if not self.path:
+                self.path = astar((self.x, self.y), (target_x, target_y))
+            if self.path:
+                self.x, self.y = self.path.pop(0)
     
     def draw(self, screen):
         pygame.draw.circle(screen, self.color, (self.x, self.y), 10)
 
+# Instanciar personajes
 mouse = Roomba(RED, 3)
 cat = Roomba(BLUE, 2)
 cheeses = [get_random_position() for _ in range(5)]
@@ -122,22 +155,26 @@ def move_cat(keys):
 
 running = True
 clock = pygame.time.Clock()
+
 while running:
     screen.fill(WHITE)
     
-    # Dibujar zonas llenas de verde (coloreadas enteramente)
+    # Dibujar zonas en verde
     for _, (x, y, w, h) in zones.items():
         pygame.draw.rect(screen, GREEN, (x, y, w, h))
-        
+    
+    # Dibujar quesos
     for cheese in cheeses:
         pygame.draw.circle(screen, (255, 255, 0), cheese, 5)
     
+    # Movimiento automático del ratón: se dirige al primer queso de la lista
     if cheeses:
         target = cheeses[0]
         mouse.move_towards(*target)
         if abs(mouse.x - target[0]) < 5 and abs(mouse.y - target[1]) < 5:
             cheeses.pop(0)
     
+    # Si el gato atrapa al ratón
     if abs(mouse.x - cat.x) < 10 and abs(mouse.y - cat.y) < 10:
         print("El gato atrapó al ratón. Fin del juego.")
         running = False
@@ -145,7 +182,7 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-            
+    
     keys = pygame.key.get_pressed()
     move_cat(keys)
     
@@ -155,7 +192,7 @@ while running:
     if not cheeses:
         print("El ratón ha recogido todos los quesos. Fin del juego.")
         running = False
-    
+
     pygame.display.flip()
     clock.tick(30)
 
