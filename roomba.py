@@ -44,8 +44,8 @@ def is_inside_zone(x, y):
 
 def get_random_position():
     """
-    Devuelve una posición aleatoria alineada a una cuadrícula de 10 píxeles
-    situada en alguna de las zonas.
+    Devuelve una posición aleatoria, alineada a una cuadrícula de 10 píxeles,
+    dentro de alguna de las zonas.
     """
     while True:
         zone = random.choice(list(zones.values()))
@@ -62,7 +62,7 @@ def manhattan_distance(a, b):
     """Calcula la distancia Manhattan entre dos puntos."""
     return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
-# A* (se conserva para referencia, aunque en este ejemplo el movimiento de la mosca es aleatorio)
+# A* (se conserva para referencia; en este ejemplo la mosca se mueve de forma aleatoria)
 def astar(start, goal):
     def heuristic(a, b):
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
@@ -103,7 +103,8 @@ class Roomba:
         self.color = color
         self.speed = speed
         self.sprite = sprite
-        # Usado para el movimiento "inteligente" del personaje automático (mosca)
+        # Si el personaje es el automático (mosca: RED), se utiliza un historial
+        # para evitar pisar las mismas celdas repetidamente.
         if self.color == RED:
             self.visited = set()
         else:
@@ -133,8 +134,8 @@ class Roomba:
         if not non_visited:
             self.visited.clear()  # Permite pisar celdas si está atascado
             non_visited = neighbors
-        # Con 70% de probabilidad selecciona el vecino que minimiza la distancia al objetivo,
-        # y con 30% escoge uno aleatoriamente.
+        # Con 70% de probabilidad se selecciona el vecino que minimiza la distancia al objetivo,
+        # y con 30% se elige uno aleatoriamente.
         if random.random() < 0.7:
             chosen = min(non_visited, key=lambda nb: manhattan_distance(nb, target))
         else:
@@ -150,14 +151,18 @@ fly_sprite = pygame.transform.scale(fly_sprite, (20, 20))
 chancla_sprite = pygame.image.load('chancla.jpg').convert_alpha()
 chancla_sprite = pygame.transform.scale(chancla_sprite, (30, 30))
 
+# Cargar el sprite de gente durmiendo (sustituyendo a los quesos) y escalarlo
+sleeping_sprite = pygame.image.load('sleeping.png').convert_alpha()
+sleeping_sprite = pygame.transform.scale(sleeping_sprite, (30, 30))
+
 # Instanciar personajes:
-# La mosca se mueve automáticamente y se representa con su sprite.
+# La mosca se mueve automáticamente y se muestra con su sprite.
 fly = Roomba(RED, 3, sprite=fly_sprite)
-# El jugador (controlado por el teclado) se representa con el sprite de chancla.
+# El jugador (controlado por el teclado) se muestra con el sprite de chancla.
 cat = Roomba(BLUE, 2, sprite=chancla_sprite)
 
-# Generar posiciones para los quesos
-cheeses = [get_random_position() for _ in range(5)]
+# Generar posiciones para la "gente durmiendo" (sustituyen a los quesos)
+sleeping_positions = [get_random_position() for _ in range(5)]
 
 def calculate_cleaning_time():
     rate = 3  # Valor arbitrario, en cm²/segundo
@@ -168,7 +173,7 @@ def calculate_cleaning_time():
 time_to_clean = calculate_cleaning_time()
 
 def move_cat(keys):
-    # Movimiento del jugador (con el sprite de chancla) por el teclado
+    # Movimiento del jugador (sprite de chancla) mediante el teclado
     if keys[pygame.K_LEFT] and is_inside_zone(cat.x - cat.speed, cat.y):
         cat.x -= cat.speed
     if keys[pygame.K_RIGHT] and is_inside_zone(cat.x + cat.speed, cat.y):
@@ -185,40 +190,40 @@ clock = pygame.time.Clock()
 while running:
     screen.fill(WHITE)
     
-    # Dibujar las zonas coloreadas enteramente de verde
+    # Dibujar las zonas enteramente en verde
     for _, (x, y, w, h) in zones.items():
         pygame.draw.rect(screen, GREEN, (x, y, w, h))
     
-    # Dibujar los quesos como círculos amarillos
-    for cheese in cheeses:
-        pygame.draw.circle(screen, (255, 255, 0), cheese, 5)
+    # Dibujar "gente durmiendo" usando el sprite sleeping_sprite
+    for pos in sleeping_positions:
+        screen.blit(sleeping_sprite, pos)
     
-    # Movimiento automático de la mosca hacia el primer queso de la lista
-    if cheeses:
-        target = cheeses[0]
+    # Movimiento automático de la mosca hacia el primer "dormido" en la lista
+    if sleeping_positions:
+        target = sleeping_positions[0]
         fly.move_randomly_towards(target)
-        # Si la mosca está cerca del queso, se "recoge" el queso.
+        # Si la mosca está cerca del objetivo, se "recoge" (se elimina) la persona durmiendo.
         if abs(fly.x - target[0]) < 10 and abs(fly.y - target[1]) < 10:
-            cheeses.pop(0)
+            sleeping_positions.pop(0)
     
-    # Comprobar colisión: si el jugador atrapa a la mosca
+    # Comprobación de colisión: si el jugador (chancla) atrapa a la mosca
     if abs(fly.x - cat.x) < 10 and abs(fly.y - cat.y) < 10:
-        print("El gato atrapó a la mosca. Fin del juego.")
+        print("El jugador atrapó a la mosca. Fin del juego.")
         running = False
     
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-
+    
     keys = pygame.key.get_pressed()
     move_cat(keys)
     
-    # Dibujar los personajes
+    # Dibujar personajes
     fly.draw(screen)
     cat.draw(screen)
     
-    if not cheeses:
-        print("La mosca ha recogido todos los quesos. Fin del juego.")
+    if not sleeping_positions:
+        print("La mosca ha recogido a toda la gente durmiendo. Fin del juego.")
         running = False
 
     pygame.display.flip()
