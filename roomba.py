@@ -1,135 +1,127 @@
 import pygame
-import concurrent.futures
 import random
+import concurrent.futures
 
-# Inicializar pygame
+# Configuración de Pygame
 pygame.init()
 
 # Dimensiones de la pantalla
-WIDTH, HEIGHT = 600, 600
+WIDTH, HEIGHT = 800, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Bebé Roomba y Padre Roomba")
+pygame.display.set_caption("Roomba Cat & Mouse")
 
-# Definición de zonas de limpieza
+# Colores
+WHITE = (255, 255, 255)
+RED = (255, 0, 0)
+BLUE = (0, 0, 255)
+YELLOW = (255, 255, 0)
+
+# Zonas de limpieza (x, y, ancho, alto)
 zonas = {
-    'Zona 1': (50, 50, 200, 100),  # (x, y, ancho, alto)
-    'Zona 2': (300, 50, 180, 100),
-    'Zona 3': (100, 200, 250, 150),
-    'Zona 4': (400, 300, 90, 220)
+    'Zona 1': (50, 50, 200, 150),
+    'Zona 2': (300, 100, 180, 101),
+    'Zona 3': (100, 300, 309, 200),
+    'Zona 4': (400, 400, 90, 220)
 }
 
-# Crear una superficie para almacenar las huellas del bebé
-huellas_superficie = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-huellas_superficie.fill((0, 0, 0, 0))  # Transparente
-
-# Crear una superficie para almacenar las áreas limpiadas
-zona_superficie = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-zona_superficie.fill((0, 0, 0, 0))  # Transparente
-
-# Tasa de limpieza (1000 cm²/s)
-tasa_limpeza = 1000  # cm²/s
-
-# Función para calcular el área
+# Cálculo de áreas para determinar el tiempo de limpieza
 def calcular_area(largo, ancho):
     return largo * ancho
 
-# Calcular áreas de las zonas
 areas = {}
 with concurrent.futures.ThreadPoolExecutor() as executor:
-    future_to_zona = {executor.submit(calcular_area, w, h): zona for zona, (x, y, w, h) in zonas.items()}
+    future_to_zona = {executor.submit(calcular_area, w, h): zona for zona, (_, _, w, h) in zonas.items()}
     for future in concurrent.futures.as_completed(future_to_zona):
         zona = future_to_zona[future]
         areas[zona] = future.result()
 
-# Superficie total y tiempo estimado
 superficie_total = sum(areas.values())
-tiempo_limpeza = superficie_total / tasa_limpeza
+tasa_limpeza = 1000
+limpieza_tiempo = superficie_total / tasa_limpeza
 
-time_limit = 30  # Tiempo límite antes de que llegue la madre
-time_remaining = time_limit
-
-# Clase Roomba
+# Personajes
 class Roomba:
-    def __init__(self, x, y, color, leave_trail=False):
+    def __init__(self, x, y, color, speed):
         self.x = x
         self.y = y
-        self.radius = 15
-        self.speed = 3
         self.color = color
-        self.leave_trail = leave_trail
-        self.direction = [random.choice([-self.speed, self.speed]), random.choice([-self.speed, self.speed])]
-        self.change_direction_timer = 0
+        self.speed = speed
+        self.rect = pygame.Rect(self.x, self.y, 30, 30)
     
-    def move(self):
-        self.x += self.direction[0]
-        self.y += self.direction[1]
-        
-        # Rebote en los bordes de la pantalla
-        if self.x - self.radius < 0 or self.x + self.radius > WIDTH:
-            self.direction[0] = -self.direction[0]
-        if self.y - self.radius < 0 or self.y + self.radius > HEIGHT:
-            self.direction[1] = -self.direction[1]
-        
-        # Cambio de dirección aleatorio cada cierto tiempo
-        self.change_direction_timer += 1
-        if self.change_direction_timer > 100:
-            self.direction = [random.choice([-self.speed, 0, self.speed]), random.choice([-self.speed, 0, self.speed])]
-            self.change_direction_timer = 0
-        
-        # Dejar huellas si es el bebé
-        if self.leave_trail:
-            pygame.draw.circle(huellas_superficie, (200, 100, 0, 150), (self.x, self.y), self.radius // 2)
-        
-        # Limpiar huellas si es el padre
-        if not self.leave_trail:
-            pygame.draw.circle(zona_superficie, (0, 0, 0, 0), (self.x, self.y), self.radius // 2)
+    def move_towards(self, target_x, target_y):
+        if self.x < target_x:
+            self.x += min(self.speed, target_x - self.x)
+        elif self.x > target_x:
+            self.x -= min(self.speed, self.x - target_x)
+        if self.y < target_y:
+            self.y += min(self.speed, target_y - self.y)
+        elif self.y > target_y:
+            self.y -= min(self.speed, self.y - target_y)
+        self.rect.topleft = (self.x, self.y)
     
-    def draw(self, screen):
-        pygame.draw.circle(screen, self.color, (self.x, self.y), self.radius)
+    def draw(self):
+        pygame.draw.rect(screen, self.color, self.rect)
 
-# Crear Roombas
-bebe_roomba = Roomba(WIDTH // 4, HEIGHT // 4, (255, 100, 100), leave_trail=True)
-padre_roomba = Roomba(WIDTH // 2, HEIGHT // 2, (100, 100, 255), leave_trail=False)
+# Inicialización de Roombas
+mouse_roomba = Roomba(100, 100, BLUE, 2)  # Roomba ratón
+cat_roomba = Roomba(400, 300, RED, 4)  # Roomba gato (jugador)
+
+# Quesos dentro de las zonas
+quesos = []
+for _ in range(5):
+    zona = random.choice(list(zonas.values()))
+    x = random.randint(zona[0], zona[0] + zona[2] - 10)
+    y = random.randint(zona[1], zona[1] + zona[3] - 10)
+    quesos.append(pygame.Rect(x, y, 10, 10))
 
 # Bucle principal
-running = True
-clock = pygame.time.Clock()
-while running:
-    screen.fill((200, 200, 200))  # Fondo gris
+def game_loop():
+    running = True
+    clock = pygame.time.Clock()
+    cheese_index = 0
     
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
+    while running:
+        screen.fill(WHITE)
+        for zona in zonas.values():
+            pygame.draw.rect(screen, YELLOW, zona, 2)
+        
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+        
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_LEFT]:
+            cat_roomba.x -= cat_roomba.speed
+        if keys[pygame.K_RIGHT]:
+            cat_roomba.x += cat_roomba.speed
+        if keys[pygame.K_UP]:
+            cat_roomba.y -= cat_roomba.speed
+        if keys[pygame.K_DOWN]:
+            cat_roomba.y += cat_roomba.speed
+        cat_roomba.rect.topleft = (cat_roomba.x, cat_roomba.y)
+        
+        if cheese_index < len(quesos):
+            target_cheese = quesos[cheese_index]
+            mouse_roomba.move_towards(target_cheese.x, target_cheese.y)
+            if mouse_roomba.rect.colliderect(target_cheese):
+                quesos.pop(cheese_index)
+        
+        for cheese in quesos:
+            pygame.draw.rect(screen, YELLOW, cheese)
+        
+        mouse_roomba.draw()
+        cat_roomba.draw()
+        
+        if mouse_roomba.rect.colliderect(cat_roomba.rect):
+            print("El gato atrapó al ratón. Fin del juego.")
             running = False
+        elif len(quesos) == 0:
+            print("El ratón recogió todos los quesos. Fin del juego.")
+            running = False
+        
+        pygame.display.flip()
+        clock.tick(30)
     
-    # Dibujar zonas
-    for zona, (x, y, w, h) in zonas.items():
-        pygame.draw.rect(screen, (0, 100, 255, 150), (x, y, w, h))  # Semitransparente
-    
-    # Dibujar huellas del bebé
-    screen.blit(huellas_superficie, (0, 0))
-    
-    # Mover y dibujar las Roombas
-    bebe_roomba.move()
-    bebe_roomba.draw(screen)
-    
-    padre_roomba.move()
-    padre_roomba.draw(screen)
-    
-    # Limpiar huellas al pasar el padre
-    screen.blit(zona_superficie, (0, 0))
-    
-    # Actualizar el tiempo restante
-    time_remaining -= 1 / 60
-    font = pygame.font.Font(None, 36)
-    timer_text = font.render(f"Tiempo: {max(0, int(time_remaining))}s", True, (0, 0, 0))
-    screen.blit(timer_text, (10, 10))
-    
-    # Condición de fin de juego
-    if time_remaining <= 0:
-        running = False
-    
-    # Actualizar pantalla
-    pygame.display.flip()
-    clock.tick(60)
+    pygame.quit()
 
-pygame.quit()
+game_loop()
