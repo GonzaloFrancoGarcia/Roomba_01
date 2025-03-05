@@ -25,6 +25,10 @@ zonas = {
     'Zona 4': (400, 300, 90, 220)
 }
 
+# Crear una superficie para almacenar las áreas limpiadas
+zona_superficie = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+zona_superficie.fill((0, 0, 0, 0))  # Transparente
+
 # Tasa de limpieza (1000 cm²/s)
 tasa_limpeza = 1000  # cm²/s
 
@@ -53,7 +57,6 @@ class Roomba:
         self.color = RED
         self.speed = 3
         self.direction = [random.choice([-self.speed, self.speed]), random.choice([-self.speed, self.speed])]
-        self.cleaned_zones = set()
         self.change_direction_timer = 0
     
     def move(self):
@@ -72,10 +75,8 @@ class Roomba:
             self.direction = [random.choice([-self.speed, 0, self.speed]), random.choice([-self.speed, 0, self.speed])]
             self.change_direction_timer = 0
             
-        # Detectar colisión con zonas y marcarlas como limpiadas
-        for zona, (zx, zy, zw, zh) in zonas.items():
-            if zx < self.x < zx + zw and zy < self.y < zy + zh:
-                self.cleaned_zones.add(zona)
+        # Detectar colisión con zonas y marcar la trayectoria de limpieza
+        pygame.draw.circle(zona_superficie, GREEN, (self.x, self.y), self.radius // 2)
     
     def draw(self, screen):
         pygame.draw.circle(screen, self.color, (self.x, self.y), self.radius)
@@ -95,8 +96,10 @@ while running:
     
     # Dibujar zonas
     for zona, (x, y, w, h) in zonas.items():
-        color = GREEN if zona in roomba.cleaned_zones else BLUE
-        pygame.draw.rect(screen, color, (x, y, w, h))
+        pygame.draw.rect(screen, BLUE, (x, y, w, h))
+    
+    # Dibujar superficie limpiada
+    screen.blit(zona_superficie, (0, 0))
     
     # Mover y dibujar la Roomba
     roomba.move()
