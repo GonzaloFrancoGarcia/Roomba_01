@@ -54,6 +54,7 @@ class Roomba:
         self.speed = 3
         self.direction = [random.choice([-self.speed, self.speed]), random.choice([-self.speed, self.speed])]
         self.cleaned_zones = set()
+        self.change_direction_timer = 0
     
     def move(self):
         self.x += self.direction[0]
@@ -65,6 +66,12 @@ class Roomba:
         if self.y - self.radius < 0 or self.y + self.radius > HEIGHT:
             self.direction[1] = -self.direction[1]
         
+        # Cambio de dirección aleatorio cada cierto tiempo
+        self.change_direction_timer += 1
+        if self.change_direction_timer > 100:
+            self.direction = [random.choice([-self.speed, 0, self.speed]), random.choice([-self.speed, 0, self.speed])]
+            self.change_direction_timer = 0
+            
         # Detectar colisión con zonas y marcarlas como limpiadas
         for zona, (zx, zy, zw, zh) in zonas.items():
             if zx < self.x < zx + zw and zy < self.y < zy + zh:
