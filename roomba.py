@@ -51,17 +51,24 @@ class Roomba:
         self.y = y
         self.radius = 15
         self.color = RED
-        self.speed = 2
-        self.direction = random.choice([(self.speed, 0), (-self.speed, 0), (0, self.speed), (0, -self.speed)])
-
+        self.speed = 3
+        self.direction = [random.choice([-self.speed, self.speed]), random.choice([-self.speed, self.speed])]
+        self.cleaned_zones = set()
+    
     def move(self):
         self.x += self.direction[0]
         self.y += self.direction[1]
         
-        if self.x < 0 or self.x > WIDTH:
-            self.direction = (-self.direction[0], self.direction[1])
-        if self.y < 0 or self.y > HEIGHT:
-            self.direction = (self.direction[0], -self.direction[1])
+        # Rebote en los bordes de la pantalla
+        if self.x - self.radius < 0 or self.x + self.radius > WIDTH:
+            self.direction[0] = -self.direction[0]
+        if self.y - self.radius < 0 or self.y + self.radius > HEIGHT:
+            self.direction[1] = -self.direction[1]
+        
+        # Detectar colisión con zonas y marcarlas como limpiadas
+        for zona, (zx, zy, zw, zh) in zonas.items():
+            if zx < self.x < zx + zw and zy < self.y < zy + zh:
+                self.cleaned_zones.add(zona)
     
     def draw(self, screen):
         pygame.draw.circle(screen, self.color, (self.x, self.y), self.radius)
@@ -81,7 +88,8 @@ while running:
     
     # Dibujar zonas
     for zona, (x, y, w, h) in zonas.items():
-        pygame.draw.rect(screen, BLUE, (x, y, w, h))
+        color = GREEN if zona in roomba.cleaned_zones else BLUE
+        pygame.draw.rect(screen, color, (x, y, w, h))
     
     # Mover y dibujar la Roomba
     roomba.move()
