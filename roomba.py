@@ -12,13 +12,12 @@ def calcular_area(largo, ancho):
 def generar_dust(zona, dust_particles, lock, stop_event, zona_rect, nivel):
     """
     Genera "gente durmiendo" en la zona (representado por círculos grises).
-    Se utiliza un retardo que es inversamente proporcional al nivel para que
-    en niveles superiores aparezca más gente.
+    Se utiliza un delay mayor en niveles bajos para que en el nivel 1 aparezca menos gente.
     """
     x0, y0, width, height = zona_rect
     while not stop_event.is_set():
-        # En niveles altos, la espera se reduce y aparecen más personas.
-        delay = random.uniform(4.0, 6.0) / nivel  # Nº de personas
+        # Para que en niveles bajos (nivel 1) aparezca menos gente, se usa un delay mayor.
+        delay = random.uniform(6.0, 8.0) / nivel
         time.sleep(delay)
         x = random.randint(x0, x0 + width)
         y = random.randint(y0, y0 + height)
@@ -28,30 +27,27 @@ def generar_dust(zona, dust_particles, lock, stop_event, zona_rect, nivel):
 
 def mover_mosquito(mosquito_pos, mosquito_vel, dust_particles, lock, stop_event, window_size, zone_rects, velocidad_base, tasa_limpeza):
     """
-    Controla el movimiento del mosquito con los siguientes comportamientos:
-      - Por defecto, se mueve de forma aleatoria dentro de las zonas.
-      - Si pasan 20 s sin picar a nadie, activa el modo SEEK y se dirige a la persona
-        más cercana.
-      - En modo SEEK, si pasan 10 s sin picar (por ejemplo, se queda cerca de una pared),
-        vuelve al movimiento aleatorio.
-      - Además, en modo aleatorio, si se acerca (dentro de 30 píxeles) a alguien, ajusta
-        su dirección para acercarse.
+    Controla el movimiento del mosquito (equivalente al Roomba) con los siguientes comportamientos:
+      - Por defecto se mueve aleatoriamente dentro de las zonas.
+      - Si pasan 5 segundos sin picar a nadie, se activa el modo SEEK y se dirige hacia la gente durmiendo más cercana.
+      - En modo SEEK, si pasan 10 segundos sin picar, se cancela el modo y vuelve a movimiento aleatorio.
+      - En modo aleatorio, si se acerca (umbral 30 píxeles) a alguien, ajusta su dirección para acercarse.
+      
+    "Picar" significa eliminar a la gente durmiendo (se borran sus coordenadas).
     """
-    cleaning_radius = 10  # Radio en píxeles para "picar" a la gente (se borra la gente durmiendo)
-    dt = 0.05           # Intervalo de actualización
+    cleaning_radius = 10  # Radio en píxeles para "picar"
+    dt = 0.05           # Intervalo de actualización en segundos
     last_print = time.time()
     window_width, window_height = window_size
 
-    # Registra el último momento en que se picó a alguien.
-    last_collection_time = time.time()
+    last_collection_time = time.time()  # Último momento en que se picó gente
     in_seek_mode = False
     seek_start_time = None
 
     def allowed_position(x, y):
-        """Retorna True si (x, y) está dentro de alguna zona."""
         for rect in zone_rects.values():
             rx, ry, rw, rh = rect
-            if rx <= x <= rx + rw and ry <= y <= ry + rh:
+            if rx <= x <= rx+rw and ry <= y <= ry+rh:
                 return True
         return False
 
@@ -59,29 +55,28 @@ def mover_mosquito(mosquito_pos, mosquito_vel, dust_particles, lock, stop_event,
         time.sleep(dt)
         with lock:
             current_time = time.time()
-            # Activar modo SEEK si han pasado 20 s sin picar.
-            if not in_seek_mode and (current_time - last_collection_time > 20):
+            # Activar modo SEEK después de 5 segundos sin picar.
+            if not in_seek_mode and (current_time - last_collection_time > 5):
                 in_seek_mode = True
                 seek_start_time = current_time
-                print("Modo SEEK activado: 20 s sin picar gente.")
-            # Si en SEEK transcurren 10 s sin éxito, cancelar y volver a aleatorio.
-            if in_seek_mode and (current_time - seek_start_time > 10):
+                print("Modo SEEK activado: 5 segundos sin picar gente.")
+            # Si en modo SEEK pasan 5 segundos sin picar, cancelar el modo y volver a aleatorio.
+            if in_seek_mode and (current_time - seek_start_time > 5):
                 in_seek_mode = False
-                # Restablecer velocidad aleatoria (esta velocidad se actualizará en cada nivel)
-                mosquito_vel[0] = random.choice([-1, 1]) * velocidad_base * (tasa_limpeza/1000)
-                mosquito_vel[1] = random.choice([-1, 1]) * velocidad_base * (tasa_limpeza/1000)
+                mosquito_vel[0] = random.choice([-1, 1]) * velocidad_base * (tasa_limpeza / 1000)
+                mosquito_vel[1] = random.choice([-1, 1]) * velocidad_base * (tasa_limpeza / 1000)
                 last_collection_time = current_time
-                print("Modo SEEK cancelado: 10 s sin picar, volviendo a aleatorio.")
+                print("Modo SEEK cancelado: 5 segundos sin picar, volviendo a aleatorio.")
 
-            # En modo SEEK: buscar la persona más cercana y ajustar la dirección.
+            # Modo SEEK: buscar la gente durmiendo más cercana y ajustar la dirección.
             if in_seek_mode:
                 candidate = None
                 best_dist = float('inf')
                 for zona in dust_particles:
                     for (x, y) in dust_particles[zona]:
-                        dist_sq = (x - mosquito_pos[0])**2 + (y - mosquito_pos[1])**2
-                        if dist_sq < best_dist:
-                            best_dist = dist_sq
+                        dist = (x - mosquito_pos[0])**2 + (y - mosquito_pos[1])**2
+                        if dist < best_dist:
+                            best_dist = dist
                             candidate = (x, y)
                 if candidate is not None:
                     dx = candidate[0] - mosquito_pos[0]
@@ -93,9 +88,9 @@ def mover_mosquito(mosquito_pos, mosquito_vel, dust_particles, lock, stop_event,
                         mosquito_vel[1] = speed * dy / norm
                     print("Modo SEEK: ajustando dirección hacia la gente durmiendo más cercana.")
 
-            # En modo aleatorio, si se pasa cerca de alguien (umbral 30 píxeles), ajusta la dirección.
+            # Modo aleatorio: si se está cerca (umbral 30 píxeles) de alguien, ajustar dirección.
             if not in_seek_mode:
-                near_threshold = 30
+                near_threshold = 30  # píxeles
                 candidate_near = None
                 best_dist_near = float('inf')
                 for zona in dust_particles:
@@ -116,7 +111,7 @@ def mover_mosquito(mosquito_pos, mosquito_vel, dust_particles, lock, stop_event,
                         mosquito_vel[1] = speed * dy / norm
                     print("Aleatorio: acercándose a gente durmiendo cercana.")
 
-            # Calcular la nueva posición tentativa.
+            # Calcular la nueva posición candidata.
             new_x = mosquito_pos[0] + mosquito_vel[0]
             new_y = mosquito_pos[1] + mosquito_vel[1]
             if allowed_position(new_x, new_y):
@@ -133,7 +128,7 @@ def mover_mosquito(mosquito_pos, mosquito_vel, dust_particles, lock, stop_event,
                     mosquito_vel[0] = -mosquito_vel[0]
                     mosquito_vel[1] = -mosquito_vel[1]
 
-            # Proceso de "picar": si el mosquito se encuentra dentro del radio de "picadura", elimina esa gente durmiendo.
+            # Proceso de "picadura": si el mosquito está dentro del radio, se elimina esa gente durmiendo.
             cleaned = False
             for zona in dust_particles:
                 new_list = []
@@ -157,7 +152,7 @@ def mover_mosquito(mosquito_pos, mosquito_vel, dust_particles, lock, stop_event,
                 last_print = time.time()
 
 def allowed_position_general(x, y, zone_rects):
-    """Verifica si (x, y) está en alguna zona."""
+    """Verifica si (x, y) está dentro de alguna zona (usado por el jugador)."""
     for rect in zone_rects.values():
         rx, ry, rw, rh = rect
         if rx <= x <= rx+rw and ry <= y <= ry+rh:
@@ -166,18 +161,16 @@ def allowed_position_general(x, y, zone_rects):
 
 def main():
     # ===================== DIMENSIONES Y CÁLCULO DE ÁREAS =====================
-    # Definición de cada zona (ancho, alto) en cm
     zonas = {
         'Zona 1': (500, 150),
         'Zona 2': (101, 220),
         'Zona 3': (309, 220),
         'Zona 4': (500, 150)
     }
-    tasa_limpeza = 1000  # Base para la velocidad del mosquito.
+    tasa_limpeza = 1000  # Base para la velocidad del mosquito
     areas = {}
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_to_zona = {executor.submit(calcular_area, largo, ancho): zona
-                          for zona, (largo, ancho) in zonas.items()}
+        future_to_zona = {executor.submit(calcular_area, largo, ancho): zona for zona, (largo, ancho) in zonas.items()}
         for future in concurrent.futures.as_completed(future_to_zona):
             zona = future_to_zona[future]
             try:
@@ -201,7 +194,6 @@ def main():
     pygame.display.set_caption("Simulación Mosquito - Jugador vs Mosquito")
     clock = pygame.time.Clock()
     
-    # Posiciones (en cm) de cada zona según el plano.
     zone_positions = {
         'Zona 1': (50, 31),
         'Zona 2': (50, 180),
@@ -218,14 +210,16 @@ def main():
                             int(alto*SCALE))
     
     # ===================== VARIABLES COMPARTIDAS Y PERSONAJES =====================
-    dust_particles = {zona: [] for zona in zonas}  # Representa gente durmiendo.
+    dust_particles = {zona: [] for zona in zonas}  # Representa la gente durmiendo.
     lock = threading.Lock()
     mosquito_stop_event = threading.Event()
     
     velocidad_base = 10  # Factor base para la velocidad.
-    # La velocidad del mosquito se actualizará en cada nivel para que sea alta al inicio y se reduzca con el avance.
-    mosquito_vel = [random.choice([-1, 1]) * velocidad_base * (tasa_limpeza/1000),
-                    random.choice([-1, 1]) * velocidad_base * (tasa_limpeza/1000)]
+    # Para el nivel 1, la velocidad del mosquito es: velocidad_base * (tasa_limpeza/1000).
+    mosquito_vel = [
+        random.choice([-1, 1]) * velocidad_base * (tasa_limpeza/1000),
+        random.choice([-1, 1]) * velocidad_base * (tasa_limpeza/1000)
+    ]
     mosquito_pos = [WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2]
     
     mosquito_thread = threading.Thread(
@@ -237,10 +231,9 @@ def main():
     
     # Configuración del jugador.
     player_radius = 8
-    # Inicializamos la posición del jugador en una zona permitida (por ejemplo, en Zona 1).
     player_pos = [int(100 * SCALE), int(100 * SCALE)]
     player_speed = 5
-    game_over = False  # Aquí se considerará como "victoria" cuando el jugador capture el mosquito.
+    game_over = False
     
     # ===================== BUCLE DE NIVELES =====================
     running = True
@@ -248,18 +241,30 @@ def main():
     font = pygame.font.SysFont(None, 24)
     
     while running:
-        # Actualizamos la velocidad del mosquito dependiendo del nivel: más rápido al principio, más lento con el avance.
+        # Aquí comprobamos si vamos a iniciar un nuevo nivel.
+        # Si ya se alcanza el nivel 3, no iniciamos un nuevo nivel y mostramos GAME OVER.
+        if level >= 3:
+            screen.fill((0, 0, 0))
+            game_over_msg = font.render("GAME OVER", True, (255, 0, 0))
+            screen.blit(game_over_msg, (WINDOW_WIDTH//2 - game_over_msg.get_width()//2,
+                                        WINDOW_HEIGHT//2 - game_over_msg.get_height()//2))
+            pygame.display.flip()
+            time.sleep(3)
+            break  # Salir del bucle de niveles.
+        
+        # Actualiza la velocidad del mosquito en función del nivel: en nivel 1, es rápido,
+        # y en niveles superiores se reduce (dividiendo por el nivel).
         with lock:
             mosquito_vel[0] = random.choice([-1, 1]) * (velocidad_base / level) * (tasa_limpeza/1000)
             mosquito_vel[1] = random.choice([-1, 1]) * (velocidad_base / level) * (tasa_limpeza/1000)
-        # Reiniciamos la "gente durmiendo" para el nuevo nivel.
+        
+        # Reiniciar la gente durmiendo para el nuevo nivel.
         with lock:
             for zona in dust_particles:
                 dust_particles[zona].clear()
         
-        # Crear un evento para detener la generación de gente durmiendo en el nivel actual.
         current_dust_stop_event = threading.Event()
-        # En niveles altos se generan más personas (duración de generación aumenta con el nivel).
+        # En niveles superiores se genera más gente (el delay se reduce proporcionalmente al nivel).
         current_simulation_duration = 10 * level
         dust_threads = []
         for zona, rect in zone_rects.items():
@@ -278,8 +283,7 @@ def main():
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN:
-                    dx = 0
-                    dy = 0
+                    dx, dy = 0, 0
                     if event.key == pygame.K_LEFT:
                         dx = -player_speed
                     elif event.key == pygame.K_RIGHT:
@@ -294,35 +298,42 @@ def main():
                         player_pos[0] = candidate_x
                         player_pos[1] = candidate_y
             
+            with lock:
+                current_mosquito_pos = mosquito_pos[:]
+            mosquito_radius = 8
+            collision_threshold = mosquito_radius + player_radius + 2
+            dist = math.sqrt((player_pos[0] - current_mosquito_pos[0])**2 +
+                             (player_pos[1] - current_mosquito_pos[1])**2)
+            if dist < collision_threshold:
+                game_over = True
+                running = False
+                current_dust_stop_event.set()
+            
             if time.time() - level_start_time > current_simulation_duration and not current_dust_stop_event.is_set():
                 current_dust_stop_event.set()
             
             screen.fill((30, 30, 30))
-            # Dibujar zonas.
             for zona, rect in zone_rects.items():
                 pygame.draw.rect(screen, (70,70,200), rect, 2)
                 text_zone = font.render(zona, True, (200,200,200))
-                screen.blit(text_zone, (rect[0]+5, rect[1]+5))
+                screen.blit(text_zone, (rect[0] + 5, rect[1] + 5))
                 with lock:
                     dust_count = len(dust_particles[zona])
                 text_dust = font.render(f"Gente: {dust_count}", True, (200,200,200))
-                screen.blit(text_dust, (rect[0]+5, rect[1]+30))
+                screen.blit(text_dust, (rect[0] + 5, rect[1] + 30))
             
             with lock:
                 dust_copy = {z: dust_particles[z][:] for z in dust_particles}
                 current_mosquito_pos = mosquito_pos[:]
-            # Dibujar gente durmiendo (círculos grises).
             for zona, dust_list in dust_copy.items():
                 for (x, y) in dust_list:
                     pygame.draw.circle(screen, (128,128,128), (x, y), 4)
             
-            # Dibujar el mosquito (círculo verde).
             pygame.draw.circle(screen, (0,255,0),
                                (int(current_mosquito_pos[0]), int(current_mosquito_pos[1])), 8)
             text_mosquito = font.render(f"Mosquito: ({int(current_mosquito_pos[0])}, {int(current_mosquito_pos[1])})", True, (0,255,0))
             screen.blit(text_mosquito, (WINDOW_WIDTH - 220, WINDOW_HEIGHT - 30))
             
-            # Dibujar al jugador (círculo rojo).
             pygame.draw.circle(screen, (255,0,0),
                                (int(player_pos[0]), int(player_pos[1])), player_radius)
             text_player = font.render(f"Jugador: ({int(player_pos[0])}, {int(player_pos[1])})", True, (255,0,0))
@@ -341,15 +352,6 @@ def main():
                 screen.blit(info_surface, (info_x, info_y))
                 info_y += info_surface.get_height() + 5
             
-            # Comprobar colisión: si el jugador colisiona con el mosquito, se termina la partida (objetivo cumplido).
-            mosquito_radius = 8
-            collision_threshold = mosquito_radius + player_radius + 2
-            dist = math.sqrt((player_pos[0] - current_mosquito_pos[0])**2 +
-                             (player_pos[1] - current_mosquito_pos[1])**2)
-            if dist < collision_threshold:
-                game_over = True
-                running = False
-            
             pygame.display.flip()
             clock.tick(30)
             
@@ -363,15 +365,15 @@ def main():
         if game_over:
             break
         
+        # Mostrar mensaje de nivel completado.
         if running:
             level_msg = font.render(f"Nivel {level} completado!", True, (0,255,255))
-            screen.blit(level_msg,
-                        (WINDOW_WIDTH//2 - level_msg.get_width()//2, WINDOW_HEIGHT//2))
+            screen.blit(level_msg, (WINDOW_WIDTH//2 - level_msg.get_width()//2, WINDOW_HEIGHT//2))
             pygame.display.flip()
             time.sleep(2)
         level += 1
     
-    # Pantalla final: si el jugador ha colisionado con el mosquito, ha eliminado al mosquito.
+    # Pantalla final: si el jugador colisionó con el mosquito, ha eliminado al mosquito.
     if game_over:
         screen.fill((0,0,0))
         win_msg = font.render("¡Has eliminado al mosquito!", True, (0,255,0))
@@ -383,6 +385,14 @@ def main():
     mosquito_stop_event.set()
     mosquito_thread.join()
     pygame.quit()
+
+def allowed_position_general(x, y, zone_rects):
+    """Función genérica para verificar si (x, y) está dentro de alguna zona."""
+    for rect in zone_rects.values():
+        rx, ry, rw, rh = rect
+        if rx <= x <= rx+rw and ry <= y <= ry+rh:
+            return True
+    return False
 
 if __name__ == '__main__':
     main()
