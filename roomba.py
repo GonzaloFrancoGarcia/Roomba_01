@@ -64,8 +64,7 @@ def mover_roomba(roomba_pos, roomba_vel, dust_particles, lock, stop_event, windo
 
 def main():
     # ===================== DIMENSIONES Y CÁLCULO DE ÁREAS =====================
-    # Actualizamos las zonas según el plano:
-    # (ancho, alto) en cm.
+    # Actualizamos las zonas según el plano: (ancho, alto) en cm.
     zonas = {
         'Zona 1': (500, 150),
         'Zona 2': (101, 220),
@@ -112,8 +111,8 @@ def main():
     zone_positions = {
         'Zona 1': (50, 31),     # Centrada en la parte superior: margen de 30 cm a izquierda.
         'Zona 2': (50, 180),    # En la parte inferior de ZONA 1, al borde izquierdo.
-        'Zona 3': (240, 180),  # Justo a la derecha de ZONA 2.
-        'Zona 4': (50, 397)    # En la parte inferior, centrada (margen de 30 cm).
+        'Zona 3': (240, 180),   # Justo a la derecha de ZONA 2.
+        'Zona 4': (50, 397)     # En la parte inferior, centrada (margen de 30 cm).
     }
     
     # Calcular el rectángulo visual para cada zona (en píxeles)
@@ -156,6 +155,7 @@ def main():
     
     # ===================== BUCLE PRINCIPAL DE PYGAME =====================
     running = True
+    font = pygame.font.SysFont(None, 24)
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -166,7 +166,6 @@ def main():
             dust_stop_event.set()
         
         screen.fill((30, 30, 30))  # Fondo oscuro
-        font = pygame.font.SysFont(None, 24)
         
         # Dibujar cada zona con su nombre y contador de motas
         for zona, rect in zone_rects.items():
@@ -187,9 +186,32 @@ def main():
                 pygame.draw.circle(screen, (255, 255, 0), (x, y), 3)
         
         # Dibujar la Roomba (círculo verde) y mostrar su posición
-        pygame.draw.circle(screen, (0, 255, 0), (int(current_roomba_pos[0]), int(current_roomba_pos[1])), 8)
-        text_roomba = font.render(f"Roomba: ({int(current_roomba_pos[0])}, {int(current_roomba_pos[1])})", True, (0, 255, 0))
+        pygame.draw.circle(screen, (0, 255, 0),
+                           (int(current_roomba_pos[0]), int(current_roomba_pos[1])), 8)
+        text_roomba = font.render(
+            f"Roomba: ({int(current_roomba_pos[0])}, {int(current_roomba_pos[1])})", True, (0, 255, 0))
         screen.blit(text_roomba, (WINDOW_WIDTH - 220, WINDOW_HEIGHT - 30))
+        
+        # =========== PANEL DE INFORMACIÓN ===========
+        # Calcular el total de motas actualmente presentes
+        with lock:
+            total_dust = sum(len(lst) for lst in dust_particles.values())
+        # Preparamos las líneas de información:
+        info_lines = [
+            f"Polvo total: {total_dust}",
+            f"Superficie total: {superficie_total} cm²",
+            f"Tiempo estimado: {tiempo_limpeza:.2f} seg"
+        ]
+        for zona, area in areas.items():
+            info_lines.append(f"{zona} área: {area} cm²")
+        
+        # Ubicar el panel en la esquina superior derecha (ajusta las coordenadas si es necesario)
+        info_x = 320
+        info_y = 10
+        for line in info_lines:
+            info_surface = font.render(line, True, (255, 255, 255))
+            screen.blit(info_surface, (info_x, info_y))
+            info_y += info_surface.get_height() + 5
         
         pygame.display.flip()
         clock.tick(30)  # 30 FPS
