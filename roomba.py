@@ -24,29 +24,52 @@ def generar_dust(zona, dust_particles, lock, stop_event, zona_rect):
             total = len(dust_particles[zona])
         print(f"{zona}: Generada mota en ({x}, {y}). Total: {total}")
 
-def mover_roomba(roomba_pos, roomba_vel, dust_particles, lock, stop_event, window_size):
+def mover_roomba(roomba_pos, roomba_vel, dust_particles, lock, stop_event, window_size, zone_rects):
     """
     Actualiza continuamente la posición del Roomba y limpia las motas
-    que se encuentren en su radio de acción.
+    que se encuentren en su radio de acción, limitando su movimiento a la
+    unión de las zonas definidas en 'zone_rects'. El Roomba puede pasar de
+    una zona a otra si estas están juntas.
     """
     cleaning_radius = 10  # radio (píxeles) para limpiar una mota
     dt = 0.05  # intervalo en segundos
     last_print = time.time()
     window_width, window_height = window_size
 
+    def allowed_position(x, y):
+        """Retorna True si el punto (x, y) se encuentra dentro de alguna de las zonas."""
+        for rect in zone_rects.values():
+            rx, ry, rw, rh = rect
+            if rx <= x <= rx + rw and ry <= y <= ry + rh:
+                return True
+        return False
+
     while not stop_event.is_set():
         time.sleep(dt)
         with lock:
-            # Actualizar posición
-            roomba_pos[0] += roomba_vel[0]
-            roomba_pos[1] += roomba_vel[1]
-            # Rebote en los bordes de la ventana
-            if roomba_pos[0] <= 0 or roomba_pos[0] >= window_width:
-                roomba_vel[0] = -roomba_vel[0]
-            if roomba_pos[1] <= 0 or roomba_pos[1] >= window_height:
-                roomba_vel[1] = -roomba_vel[1]
-            
-            # Revisar cada zona y eliminar motas en el radio de limpieza
+            # Intentar mover diagonalmente
+            new_x = roomba_pos[0] + roomba_vel[0]
+            new_y = roomba_pos[1] + roomba_vel[1]
+            if allowed_position(new_x, new_y):
+                roomba_pos[0] = new_x
+                roomba_pos[1] = new_y
+            else:
+                # Si el movimiento diagonal no es permitido, se intenta moverse solo horizontalmente
+                if allowed_position(roomba_pos[0] + roomba_vel[0], roomba_pos[1]):
+                    roomba_pos[0] += roomba_vel[0]
+                    # Rebota verticalmente
+                    roomba_vel[1] = -roomba_vel[1]
+                # O, si no, se intenta moverse solo verticalmente
+                elif allowed_position(roomba_pos[0], roomba_pos[1] + roomba_vel[1]):
+                    roomba_pos[1] += roomba_vel[1]
+                    # Rebota horizontalmente
+                    roomba_vel[0] = -roomba_vel[0]
+                else:
+                    # Si ninguna opción es válida, se rebotan ambos componentes
+                    roomba_vel[0] = -roomba_vel[0]
+                    roomba_vel[1] = -roomba_vel[1]
+
+            # Procesar la limpieza de motas
             for zona in dust_particles:
                 new_list = []
                 for (x, y) in dust_particles[zona]:
@@ -71,7 +94,6 @@ def main():
         'Zona 3': (309, 220),
         'Zona 4': (500, 150)
     }
-    # Usamos estas dimensiones para calcular áreas
     tasa_limpeza = 1000  # cm²/s (dato referencial)
     areas = {}
     with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -97,9 +119,7 @@ def main():
     # Dimensiones del cuarto en cm (según el plano)
     ROOM_WIDTH_CM = 600
     ROOM_HEIGHT_CM = 600
-    # Definimos el tamaño de la ventana de forma que se vea todo el cuarto.
     WINDOW_WIDTH, WINDOW_HEIGHT = 600, 600
-    # Calculamos la escala para convertir de cm a píxeles
     SCALE = min(WINDOW_WIDTH / ROOM_WIDTH_CM, WINDOW_HEIGHT / ROOM_HEIGHT_CM)
     
     pygame.init()
@@ -107,15 +127,14 @@ def main():
     pygame.display.set_caption("Simulación Roomba - Limpieza de Polvo (Plano)")
     clock = pygame.time.Clock()
     
-    # Posiciones (top-left) de cada zona en coordenadas del cuarto (en cm), según el plano:
+    # Posiciones (top-left) de cada zona en cm, según el plano:
     zone_positions = {
-        'Zona 1': (50, 31),     # Centrada en la parte superior: margen de 30 cm a izquierda.
-        'Zona 2': (50, 180),    # En la parte inferior de ZONA 1, al borde izquierdo.
-        'Zona 3': (240, 180),   # Justo a la derecha de ZONA 2.
-        'Zona 4': (50, 397)     # En la parte inferior, centrada (margen de 30 cm).
+        'Zona 1': (50, 31),
+        'Zona 2': (50, 180),
+        'Zona 3': (240, 180),
+        'Zona 4': (50, 398)
     }
     
-    # Calcular el rectángulo visual para cada zona (en píxeles)
     zone_rects = {}
     for zona, (largo, alto) in zonas.items():
         pos = zone_positions[zona]
@@ -128,9 +147,8 @@ def main():
     dust_particles = {zona: [] for zona in zonas}
     lock = threading.Lock()
     
-    # Eventos para detener hilos
-    dust_stop_event = threading.Event()       # Detiene la generación de polvo luego de cierto tiempo
-    roomba_stop_event = threading.Event()     # Se activa al cerrar la ventana
+    dust_stop_event = threading.Event()   # Detiene la generación de polvo tras cierto tiempo
+    roomba_stop_event = threading.Event() # Se activa al cerrar la ventana
     
     # ===================== HILOS DE GENERACIÓN DE POLVO =====================
     dust_threads = []
@@ -141,15 +159,13 @@ def main():
         dust_threads.append(t)
     
     # ===================== HILO DE MOVIMIENTO Y LIMPIEZA DEL ROOMBA =====================
-    # Iniciar Roomba en el centro de la ventana (en píxeles)
     roomba_pos = [WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2]
     roomba_vel = [random.choice([-2, 2]), random.choice([-2, 2])]
     roomba_thread = threading.Thread(target=mover_roomba,
                                      args=(roomba_pos, roomba_vel, dust_particles, lock,
-                                           roomba_stop_event, (WINDOW_WIDTH, WINDOW_HEIGHT)))
+                                           roomba_stop_event, (WINDOW_WIDTH, WINDOW_HEIGHT), zone_rects))
     roomba_thread.start()
     
-    # La generación de polvo se realizará durante 10 segundos.
     simulation_duration = 10
     dust_gen_start = time.time()
     
@@ -161,13 +177,12 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
         
-        # Detener la creación de polvo tras simulation_duration
         if time.time() - dust_gen_start > simulation_duration and not dust_stop_event.is_set():
             dust_stop_event.set()
         
-        screen.fill((30, 30, 30))  # Fondo oscuro
+        screen.fill((30, 30, 30))
         
-        # Dibujar cada zona con su nombre y contador de motas
+        # Dibujar cada zona
         for zona, rect in zone_rects.items():
             pygame.draw.rect(screen, (70, 70, 200), rect, 2)
             text_zone = font.render(zona, True, (200, 200, 200))
@@ -177,7 +192,7 @@ def main():
             text_dust = font.render(f"Polvo: {dust_count}", True, (200, 200, 200))
             screen.blit(text_dust, (rect[0] + 5, rect[1] + 30))
         
-        # Dibujar las motas de polvo (círculos amarillos)
+        # Dibujar motas de polvo
         with lock:
             dust_copy = {zona: dust_particles[zona][:] for zona in dust_particles}
             current_roomba_pos = roomba_pos[:]
@@ -185,36 +200,15 @@ def main():
             for (x, y) in dust_list:
                 pygame.draw.circle(screen, (255, 255, 0), (x, y), 3)
         
-        # Dibujar la Roomba (círculo verde) y mostrar su posición
+        # Dibujar la Roomba y mostrar su posición
         pygame.draw.circle(screen, (0, 255, 0),
                            (int(current_roomba_pos[0]), int(current_roomba_pos[1])), 8)
         text_roomba = font.render(
             f"Roomba: ({int(current_roomba_pos[0])}, {int(current_roomba_pos[1])})", True, (0, 255, 0))
         screen.blit(text_roomba, (WINDOW_WIDTH - 220, WINDOW_HEIGHT - 30))
         
-        # =========== PANEL DE INFORMACIÓN ===========
-        # Calcular el total de motas actualmente presentes
-        with lock:
-            total_dust = sum(len(lst) for lst in dust_particles.values())
-        # Preparamos las líneas de información:
-        info_lines = [
-            f"Polvo total: {total_dust}",
-            f"Superficie total: {superficie_total} cm²",
-            f"Tiempo estimado: {tiempo_limpeza:.2f} seg"
-        ]
-        for zona, area in areas.items():
-            info_lines.append(f"{zona} área: {area} cm²")
-        
-        # Ubicar el panel en la esquina superior derecha (ajusta las coordenadas si es necesario)
-        info_x = 320
-        info_y = 10
-        for line in info_lines:
-            info_surface = font.render(line, True, (255, 255, 255))
-            screen.blit(info_surface, (info_x, info_y))
-            info_y += info_surface.get_height() + 5
-        
         pygame.display.flip()
-        clock.tick(30)  # 30 FPS
+        clock.tick(30)
     
     # ===================== FINALIZACIÓN =====================
     roomba_stop_event.set()
