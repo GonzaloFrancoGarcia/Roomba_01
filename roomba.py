@@ -380,8 +380,12 @@ def main():
             break
         
         if running:
+            # Pinta la pantalla de negro para un efecto estético.
+            screen.fill((0, 0, 0))
+            # Renderiza el mensaje y lo coloca centrado.
             level_msg = font.render(f"Nivel {level} completado!", True, (0,255,255))
-            screen.blit(level_msg, (WINDOW_WIDTH//2 - level_msg.get_width()//2, WINDOW_HEIGHT//2))
+            screen.blit(level_msg, (WINDOW_WIDTH//2 - level_msg.get_width()//2, 
+                                    WINDOW_HEIGHT//2 - level_msg.get_height()//2))
             pygame.display.flip()
             time.sleep(2)
         level += 1
