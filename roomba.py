@@ -24,28 +24,31 @@ def generar_dust(zona, dust_particles, lock, stop_event, zona_rect):
             dust_particles[zona].append((x, y))
         print(f"{zona}: Generada mota en ({x}, {y}). Total: {len(dust_particles[zona])}")
 
-def mover_roomba(roomba_pos, roomba_vel, dust_particles, lock, stop_event, window_size, zone_rects):
+def mover_roomba(roomba_pos, roomba_vel, dust_particles, lock, stop_event, window_size, zone_rects, velocidad_base, tasa_limpeza):
     """
-    Actualiza continuamente la posición del Roomba y limpia las motas dentro de su radio.
+    Actualiza continuamente la posición del Roomba y limpia las motas que se encuentren en su radio.
     
-    — El movimiento se limita a las zonas definidas en 'zone_rects' (si no es posible moverse a 
-      la nueva posición se intenta un movimiento parcial o se "rebota").
-      
-    — Además:
-         Si pasan 20 segundos sin que el Roomba limpie ninguna mota (variable last_collection_time),
-         se entra en modo "seek": se busca la mota más cercana y se ajusta la velocidad para dirigirse
-         directamente hacia ella.
+    Comportamientos:
+      - Por defecto, se mueve de forma aleatoria (limitado a las zonas).
+      - Si pasan 20 segundos sin limpiar ninguna mota, se activa el modo SEEK, en el que el Roomba se dirige
+        hacia la mota más cercana.
+      - En modo SEEK, si pasan 10 segundos sin limpiar ninguna mota (por ejemplo, si la dirección lo lleva a una pared),
+        se cancela el modo SEEK y vuelve al movimiento aleatorio.
+      - Además, en el modo aleatorio, si el Roomba se acerca a una mota (por casualidad), ajusta su dirección
+        para ir a recogerla.
     """
-    cleaning_radius = 10  # radio en píxeles para limpiar una mota
-    dt = 0.05           # intervalo de actualización (segundos)
+    cleaning_radius = 10  # radio (píxeles) para limpiar una mota
+    dt = 0.05           # intervalo en segundos
     last_print = time.time()
     window_width, window_height = window_size
 
-    # Variable para llevar el registro del último momento en que se limpió algún polvo.
+    # Tiempo del último momento en que se limpió alguna mota.
     last_collection_time = time.time()
+    in_seek_mode = False
+    seek_start_time = None
 
     def allowed_position(x, y):
-        """Retorna True si (x, y) está dentro de alguna de las zonas definidas en zone_rects."""
+        """Retorna True si (x, y) está dentro de alguna de las zonas en zone_rects."""
         for rect in zone_rects.values():
             rx, ry, rw, rh = rect
             if rx <= x <= rx + rw and ry <= y <= ry + rh:
@@ -56,8 +59,23 @@ def mover_roomba(roomba_pos, roomba_vel, dust_particles, lock, stop_event, windo
         time.sleep(dt)
         with lock:
             current_time = time.time()
-            # Si han pasado 20 segundos sin limpiar ninguna mota, activar comportamiento "seek".
-            if current_time - last_collection_time > 20:
+
+            # Si han pasado 20 segundos sin limpiar, activar modo SEEK (si aún no está activo).
+            if not in_seek_mode and (current_time - last_collection_time > 20):
+                in_seek_mode = True
+                seek_start_time = current_time
+                print("Modo SEEK activado: 20 segundos sin limpiar polvo.")
+            # Si en modo SEEK pasan 10 segundos sin limpiar, cancelar SEEK.
+            if in_seek_mode and (current_time - seek_start_time > 10):
+                in_seek_mode = False
+                # Restablecer la velocidad aleatoria.
+                roomba_vel[0] = random.choice([-1, 1]) * velocidad_base * (tasa_limpeza / 1000)
+                roomba_vel[1] = random.choice([-1, 1]) * velocidad_base * (tasa_limpeza / 1000)
+                last_collection_time = current_time
+                print("Modo SEEK cancelado: 10 segundos sin recoger mota, volviendo a aleatorio.")
+
+            # En modo SEEK, buscar la mota más cercana y ajustar la dirección.
+            if in_seek_mode:
                 candidate = None
                 best_dist = float('inf')
                 for zona in dust_particles:
@@ -71,12 +89,34 @@ def mover_roomba(roomba_pos, roomba_vel, dust_particles, lock, stop_event, windo
                     dy = candidate[1] - roomba_pos[1]
                     norm = math.sqrt(dx*dx + dy*dy)
                     if norm > 0:
-                        # Mantener la magnitud actual (influenciada por tasa_limpieza) y ajustar la dirección.
                         speed = math.sqrt(roomba_vel[0]**2 + roomba_vel[1]**2)
                         roomba_vel[0] = speed * dx / norm
                         roomba_vel[1] = speed * dy / norm
-                    print("Modo SEEK activado: Dirigiéndose a la mota más cercana.")
-            
+                    print("Modo SEEK: Ajustando dirección hacia la mota más cercana.")
+
+            # En modo aleatorio, si se pasa cerca de una mota, ajustar la dirección para recogerla.
+            if not in_seek_mode:
+                near_threshold = 30  # Umbral de cercanía (píxeles); ajústalo según convenga.
+                candidate_near = None
+                best_dist_near = float('inf')
+                for zona in dust_particles:
+                    for (x, y) in dust_particles[zona]:
+                        dx = x - roomba_pos[0]
+                        dy = y - roomba_pos[1]
+                        dist = math.sqrt(dx*dx + dy*dy)
+                        if dist < near_threshold and dist < best_dist_near:
+                            best_dist_near = dist
+                            candidate_near = (x, y)
+                if candidate_near is not None:
+                    dx = candidate_near[0] - roomba_pos[0]
+                    dy = candidate_near[1] - roomba_pos[1]
+                    norm = math.sqrt(dx*dx + dy*dy)
+                    if norm > 0:
+                        speed = math.sqrt(roomba_vel[0]**2 + roomba_vel[1]**2)
+                        roomba_vel[0] = speed * dx / norm
+                        roomba_vel[1] = speed * dy / norm
+                    print("Movimiento aleatorio: acercándose a una mota cercana.")
+
             # Calcular la nueva posición tentativa.
             new_x = roomba_pos[0] + roomba_vel[0]
             new_y = roomba_pos[1] + roomba_vel[1]
@@ -93,8 +133,8 @@ def mover_roomba(roomba_pos, roomba_vel, dust_particles, lock, stop_event, windo
                 else:
                     roomba_vel[0] = -roomba_vel[0]
                     roomba_vel[1] = -roomba_vel[1]
-            
-            # Proceso de limpieza: revisar cada zona, y si alguna mota está dentro del radio, se elimina.
+
+            # Proceso de limpieza: eliminar motas dentro del radio.
             cleaned_this_iteration = False
             for zona in dust_particles:
                 new_list = []
@@ -105,9 +145,13 @@ def mover_roomba(roomba_pos, roomba_vel, dust_particles, lock, stop_event, windo
                         cleaned_this_iteration = True
                         print(f"Roomba limpió mota en {zona} en ({x}, {y})")
                 dust_particles[zona] = new_list
-            # Si se limpió alguna mota, se actualiza el temporizador.
+
+            # Si se ha limpiado alguna mota, actualizar el temporizador y salir de SEEK si estaba activo.
             if cleaned_this_iteration:
-                last_collection_time = time.time()
+                last_collection_time = current_time
+                if in_seek_mode:
+                    in_seek_mode = False
+                    print("Mota limpiada en modo SEEK; volviendo a movimiento aleatorio.")
 
             if time.time() - last_print >= 1:
                 total_dust = sum(len(lst) for lst in dust_particles.values())
@@ -115,19 +159,20 @@ def mover_roomba(roomba_pos, roomba_vel, dust_particles, lock, stop_event, windo
                 last_print = time.time()
 
 def main():
-    # ===================== DIMENSIONES Y ÁREAS =====================
-    # Definición de cada zona (ancho, alto) en cm según el plano.
+    # ===================== DIMENSIONES Y CÁLCULO DE ÁREAS =====================
     zonas = {
         'Zona 1': (500, 150),
         'Zona 2': (101, 220),
         'Zona 3': (309, 220),
         'Zona 4': (500, 150)
     }
-    tasa_limpeza = 1000  # cm²/s; este valor influirá la velocidad del Roomba.
+    tasa_limpeza = 1000  # cm²/s; valor base para la velocidad del Roomba.
     areas = {}
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_to_zona = {executor.submit(calcular_area, largo, ancho): zona 
-                          for zona, (largo, ancho) in zonas.items()}
+        future_to_zona = {
+            executor.submit(calcular_area, largo, ancho): zona 
+            for zona, (largo, ancho) in zonas.items()
+        }
         for future in concurrent.futures.as_completed(future_to_zona):
             zona = future_to_zona[future]
             try:
@@ -144,11 +189,11 @@ def main():
     ROOM_WIDTH_CM = 600
     ROOM_HEIGHT_CM = 600
     WINDOW_WIDTH, WINDOW_HEIGHT = 600, 600
-    SCALE = min(WINDOW_WIDTH/ROOM_WIDTH_CM, WINDOW_HEIGHT/ROOM_HEIGHT_CM)
+    SCALE = min(WINDOW_WIDTH / ROOM_WIDTH_CM, WINDOW_HEIGHT / ROOM_HEIGHT_CM)
     
     pygame.init()
     screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-    pygame.display.set_caption("Simulación Roomba - Comportamientos")
+    pygame.display.set_caption("Simulación Roomba - Comportamientos Avanzados")
     clock = pygame.time.Clock()
     
     # Posiciones (top-left, en cm) de cada zona según el plano.
@@ -162,29 +207,29 @@ def main():
     zone_rects = {}
     for zona, (largo, alto) in zonas.items():
         pos = zone_positions[zona]
-        zone_rects[zona] = (int(pos[0]*SCALE),
-                            int(pos[1]*SCALE),
-                            int(largo*SCALE),
-                            int(alto*SCALE))
+        zone_rects[zona] = (
+            int(pos[0] * SCALE),
+            int(pos[1] * SCALE),
+            int(largo * SCALE),
+            int(alto * SCALE)
+        )
     
     # ===================== VARIABLES COMPARTIDAS =====================
     dust_particles = {zona: [] for zona in zonas}
     lock = threading.Lock()
     roomba_stop_event = threading.Event()
     
-    # La velocidad del Roomba se define en función de tasa_limpeza.
-    velocidad_base = 2  # Factor base — ajustar para pruebas.
+    velocidad_base = 2  # Factor base para la velocidad
     roomba_vel = [
         random.choice([-1, 1]) * velocidad_base * (tasa_limpeza / 1000),
         random.choice([-1, 1]) * velocidad_base * (tasa_limpeza / 1000)
     ]
     roomba_pos = [WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2]
     
-    # Iniciar el hilo del Roomba (este hilo se mantiene durante toda la ejecución)
     roomba_thread = threading.Thread(
         target=mover_roomba,
         args=(roomba_pos, roomba_vel, dust_particles, lock, roomba_stop_event,
-              (WINDOW_WIDTH, WINDOW_HEIGHT), zone_rects)
+              (WINDOW_WIDTH, WINDOW_HEIGHT), zone_rects, velocidad_base, tasa_limpeza)
     )
     roomba_thread.start()
     
@@ -194,15 +239,12 @@ def main():
     font = pygame.font.SysFont(None, 24)
     
     while running:
-        # Reiniciar las motas para el nuevo nivel.
         with lock:
             for zona in dust_particles:
                 dust_particles[zona].clear()
         
-        # Crear un evento para detener la generación de polvo en el nivel actual.
         current_dust_stop_event = threading.Event()
-        # Definir la duración de generación, mayor en niveles superiores (más motas).
-        current_simulation_duration = 2 * level
+        current_simulation_duration = 10 * level
         
         dust_threads = []
         for zona, rect in zone_rects.items():
@@ -221,34 +263,31 @@ def main():
                 if event.type == pygame.QUIT:
                     running = False
             
-            # Detener la generación de nuevas motas tras la duración definida.
             if time.time() - level_start_time > current_simulation_duration and not current_dust_stop_event.is_set():
                 current_dust_stop_event.set()
             
             screen.fill((30, 30, 30))
             for zona, rect in zone_rects.items():
-                pygame.draw.rect(screen, (70,70,200), rect, 2)
-                text_zone = font.render(zona, True, (200,200,200))
-                screen.blit(text_zone, (rect[0]+5, rect[1]+5))
+                pygame.draw.rect(screen, (70, 70, 200), rect, 2)
+                text_zone = font.render(zona, True, (200, 200, 200))
+                screen.blit(text_zone, (rect[0] + 5, rect[1] + 5))
                 with lock:
                     dust_count = len(dust_particles[zona])
-                text_dust = font.render(f"Polvo: {dust_count}", True, (200,200,200))
-                screen.blit(text_dust, (rect[0]+5, rect[1]+30))
+                text_dust = font.render(f"Polvo: {dust_count}", True, (200, 200, 200))
+                screen.blit(text_dust, (rect[0] + 5, rect[1] + 30))
             
             with lock:
                 dust_copy = {z: dust_particles[z][:] for z in dust_particles}
                 current_roomba_pos = roomba_pos[:]
             for zona, dust_list in dust_copy.items():
                 for (x, y) in dust_list:
-                    pygame.draw.circle(screen, (255,255,0), (x, y), 3)
+                    pygame.draw.circle(screen, (255, 255, 0), (x, y), 3)
             
-            pygame.draw.circle(screen, (0,255,0),
+            pygame.draw.circle(screen, (0, 255, 0),
                                (int(current_roomba_pos[0]), int(current_roomba_pos[1])), 8)
-            text_roomba = font.render(f"Roomba: ({int(current_roomba_pos[0])}, {int(current_roomba_pos[1])})",
-                                       True, (0,255,0))
-            screen.blit(text_roomba, (WINDOW_WIDTH-220, WINDOW_HEIGHT-30))
+            text_roomba = font.render(f"Roomba: ({int(current_roomba_pos[0])}, {int(current_roomba_pos[1])})", True, (0, 255, 0))
+            screen.blit(text_roomba, (WINDOW_WIDTH - 220, WINDOW_HEIGHT - 30))
             
-            # Panel de información.
             with lock:
                 total_dust = sum(len(lst) for lst in dust_particles.values())
             info_lines = [
@@ -260,7 +299,7 @@ def main():
             info_x = 320
             info_y = 10
             for line in info_lines:
-                info_surface = font.render(line, True, (255,255,255))
+                info_surface = font.render(line, True, (255, 255, 255))
                 screen.blit(info_surface, (info_x, info_y))
                 info_y += info_surface.get_height() + 5
             
@@ -275,8 +314,9 @@ def main():
             t.join()
         
         if running:
-            level_msg = font.render(f"Nivel {level} completado!", True, (0,255,255))
-            screen.blit(level_msg, (WINDOW_WIDTH//2 - level_msg.get_width()//2, WINDOW_HEIGHT//2))
+            level_msg = font.render(f"Nivel {level} completado!", True, (0, 255, 255))
+            screen.blit(level_msg, 
+                        (WINDOW_WIDTH // 2 - level_msg.get_width() // 2, WINDOW_HEIGHT // 2))
             pygame.display.flip()
             time.sleep(2)
         
