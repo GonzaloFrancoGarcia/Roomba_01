@@ -25,18 +25,19 @@ def generar_dust(zona, dust_particles, lock, stop_event, zona_rect, nivel):
             dust_particles[zona].append((x, y))
         print(f"{zona}: Gente durmiendo generada en ({x}, {y}). Total: {len(dust_particles[zona])}")
 
-def mover_mosquito(mosquito_pos, mosquito_vel, dust_particles, lock, stop_event, window_size, zone_rects, velocidad_base, tasa_limpeza):
+def mover_mosquito(mosquito_pos, mosquito_vel, dust_particles, lock, stop_event, window_size, zone_rects, velocidad_base, tasa_limpeza, bite_sound):
     """
     Controla el movimiento del mosquito con los siguientes comportamientos:
-      - Por defecto se mueve aleatoriamente dentro de las zonas.
-      - Si pasan 5 s sin picar gente, se activa el modo SEEK y se dirige hacia la gente durmiendo más cercana.
+      - Se mueve aleatoriamente dentro de las zonas.
+      - Si pasan 5 s sin picar gente, activa el modo SEEK y se dirige hacia la gente durmiendo más cercana.
       - En modo SEEK, si pasan 5 s sin picar, se cancela y vuelve al movimiento aleatorio.
       - En modo aleatorio, si se acerca (umbral 30 px) a alguien, ajusta su dirección para acercarse.
-    
+      
     "Picar" consiste en eliminar a la gente durmiendo (borrando sus coordenadas).
+    Cada vez que se elimina una partícula se reproduce el sonido "bite_sound".
     """
-    cleaning_radius = 10   # Radio en píxeles para "picar"
-    dt = 0.05              # Intervalo de actualización (segundos)
+    cleaning_radius = 10    # Radio en píxeles para "picar"
+    dt = 0.05               # Intervalo de actualización
     last_print = time.time()
     window_width, window_height = window_size
 
@@ -68,7 +69,7 @@ def mover_mosquito(mosquito_pos, mosquito_vel, dust_particles, lock, stop_event,
                 last_collection_time = current_time
                 print("Modo SEEK cancelado: 5 s sin picar, volviendo a aleatorio.")
 
-            # En modo SEEK, buscar la gente durmiendo más cercana y ajustar dirección.
+            # En modo SEEK: buscar la gente durmiendo más cercana y ajustar la dirección.
             if in_seek_mode:
                 candidate = None
                 best_dist = float('inf')
@@ -88,7 +89,7 @@ def mover_mosquito(mosquito_pos, mosquito_vel, dust_particles, lock, stop_event,
                         mosquito_vel[1] = speed * dy / norm
                     print("Modo SEEK: ajustando dirección hacia la gente durmiendo más cercana.")
 
-            # En modo aleatorio, si se está cerca (umbral 30 px) de alguien, ajustar dirección.
+            # En modo aleatorio, si se está cerca (umbral 30 px) de alguien, ajustar la dirección.
             if not in_seek_mode:
                 near_threshold = 30
                 candidate_near = None
@@ -128,7 +129,8 @@ def mover_mosquito(mosquito_pos, mosquito_vel, dust_particles, lock, stop_event,
                     mosquito_vel[0] = -mosquito_vel[0]
                     mosquito_vel[1] = -mosquito_vel[1]
 
-            # Proceso de "picadura": eliminar a la gente durmiendo si el mosquito está dentro del radio.
+            # Proceso de "picadura": si el mosquito está dentro del radio, eliminar esa gente durmiendo
+            # y reproducir el sonido de "bite".
             cleaned = False
             for zona in dust_particles:
                 new_list = []
@@ -138,6 +140,8 @@ def mover_mosquito(mosquito_pos, mosquito_vel, dust_particles, lock, stop_event,
                     else:
                         cleaned = True
                         print(f"Mosquito picó gente en {zona} en ({x}, {y})")
+                        # Reproducir el sonido de picadura.
+                        bite_sound.play()
                 dust_particles[zona] = new_list
 
             if cleaned:
@@ -170,8 +174,7 @@ def main():
     tasa_limpeza = 1000  # Base para la velocidad del mosquito.
     areas = {}
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_to_zona = {executor.submit(calcular_area, largo, ancho): zona 
-                          for zona, (largo, ancho) in zonas.items()}
+        future_to_zona = {executor.submit(calcular_area, largo, ancho): zona for zona, (largo, ancho) in zonas.items()}
         for future in concurrent.futures.as_completed(future_to_zona):
             zona = future_to_zona[future]
             try:
@@ -191,6 +194,17 @@ def main():
     SCALE = min(WINDOW_WIDTH / ROOM_WIDTH_CM, WINDOW_HEIGHT / ROOM_HEIGHT_CM)
     
     pygame.init()
+    # Inicializar el módulo mixer para reproducir sonido.
+    pygame.mixer.init()
+    pygame.mixer.music.load("background_music.mp3")
+    pygame.mixer.music.set_volume(0.1)  # Bajo volumen para la música
+    pygame.mixer.music.play(-1)
+    squash_sound = pygame.mixer.Sound("squash.mp3")
+    squash_sound.set_volume(1.0)  # Volumen máximo para el efecto de squash
+    # Cargar el efecto de sonido para cuando el mosquito "pica" (recoge gente)
+    bite_sound = pygame.mixer.Sound("mosquito_bite.mp3")
+    bite_sound.set_volume(1.0)  # Volumen máximo para este efecto
+
     screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
     pygame.display.set_caption("Simulación Mosquito - Jugador vs Mosquito")
     clock = pygame.time.Clock()
@@ -217,7 +231,7 @@ def main():
     lock = threading.Lock()
     mosquito_stop_event = threading.Event()
     
-    velocidad_base = 20  # Factor base para la velocidad (modificado)
+    velocidad_base = 10  # Factor base para la velocidad (modificado)
     mosquito_vel = [
         random.choice([-1, 1]) * velocidad_base * (tasa_limpeza / 1000),
         random.choice([-1, 1]) * velocidad_base * (tasa_limpeza / 1000)
@@ -227,29 +241,29 @@ def main():
     mosquito_thread = threading.Thread(
         target=mover_mosquito,
         args=(mosquito_pos, mosquito_vel, dust_particles, lock, mosquito_stop_event,
-              (WINDOW_WIDTH, WINDOW_HEIGHT), zone_rects, velocidad_base, tasa_limpeza)
+              (WINDOW_WIDTH, WINDOW_HEIGHT), zone_rects, velocidad_base, tasa_limpeza, bite_sound)
     )
     mosquito_thread.start()
     
     # Configuración del jugador.
     player_radius = 8
     player_pos = [int(100 * SCALE), int(100 * SCALE)]
-    player_speed = 4
-    game_over = False  # Ahora se eliminará el mosquito solo al presionar ESPACIO cuando esté en colisión.
+    player_speed = 5
+    game_over = False  # Se aplastará al mosquito si el jugador lo golpea (ESPACIO)
     
-    # Usamos una fuente pequeña (16)
+    # Fuente pequeña (tamaño 16)
     font = pygame.font.SysFont(None, 16)
     
-    # Variable para el "buffer de colisión" (tiempo en el que se detectó una colisión)
+    # Variables para buffer de colisión.
     last_collision_time = None
-    collision_buffer = 0.2  # 200 ms de "colisión efectiva"
+    collision_buffer = 0.2  # 200 ms
     
     # ===================== BUCLE DE NIVELES =====================
     running = True
     level = 1
     
     while running:
-        # Si se alcanza el nivel 3, finalizamos el juego mostrando GAME OVER.
+        # Si se alcanza el nivel 3, finalizar el juego mostrando GAME OVER.
         if level >= 3:
             screen.fill((0, 0, 0))
             game_over_msg = font.render("GAME OVER", True, (255, 0, 0))
@@ -259,10 +273,10 @@ def main():
             time.sleep(3)
             break
         
-        # Actualiza la velocidad del mosquito en función del nivel (más rápido en nivel 1, más lento con nivel).
+        # Actualiza la velocidad del mosquito en función del nivel (más rápido en nivel 1; se reduce con el nivel).
         with lock:
-            mosquito_vel[0] = random.choice([-1, 1]) * (velocidad_base / level) * (tasa_limpeza/1000)
-            mosquito_vel[1] = random.choice([-1, 1]) * (velocidad_base / level) * (tasa_limpeza/1000)
+            mosquito_vel[0] = random.choice([-1, 1]) * (velocidad_base / level) * (tasa_limpeza / 1000)
+            mosquito_vel[1] = random.choice([-1, 1]) * (velocidad_base / level) * (tasa_limpeza / 1000)
         
         # Reiniciar la gente durmiendo para el nuevo nivel.
         with lock:
@@ -270,7 +284,7 @@ def main():
                 dust_particles[zona].clear()
         
         current_dust_stop_event = threading.Event()
-        # En niveles superiores se genera más gente (delay se reduce al dividir entre nivel).
+        # En niveles superiores se genera más gente (delay se reduce al dividir entre el nivel).
         current_simulation_duration = 10 * level
         dust_threads = []
         for zona, rect in zone_rects.items():
@@ -283,14 +297,13 @@ def main():
         
         level_start_time = time.time()
         level_complete = False
-        last_collision_time = None  # Reiniciamos el "buffer de colisión" para este nivel.
+        last_collision_time = None
         
         while running and not level_complete and not game_over:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
-            
-            # Movimiento fluido del jugador usando pygame.key.get_pressed()
+            # Movimiento continuo del jugador usando pygame.key.get_pressed()
             keys = pygame.key.get_pressed()
             dx, dy = 0, 0
             if keys[pygame.K_LEFT]:
@@ -301,7 +314,6 @@ def main():
                 dy = -player_speed
             if keys[pygame.K_DOWN]:
                 dy = player_speed
-            
             candidate_x = player_pos[0] + dx
             candidate_y = player_pos[1] + dy
             if allowed_position_general(candidate_x, candidate_y, zone_rects):
@@ -315,15 +327,16 @@ def main():
             dist = math.sqrt((player_pos[0] - current_mosquito_pos[0])**2 +
                              (player_pos[1] - current_mosquito_pos[1])**2)
             
-            # Si el jugador está en colisión, se actualiza last_collision_time.
+            # Si el jugador está en colisión, se registra el tiempo.
             if dist < collision_threshold:
                 last_collision_time = time.time()
             else:
                 last_collision_time = None
             
-            # Ahora se comprueba si el jugador ha pulsado ESPACIO dentro del buffer de colisión.
+            # Si el jugador presiona ESPACIO dentro del buffer de colisión, se aplasta al mosquito.
             if last_collision_time is not None and keys[pygame.K_SPACE]:
                 if time.time() - last_collision_time < collision_buffer:
+                    squash_sound.play()
                     game_over = True
                     running = False
                     current_dust_stop_event.set()
@@ -358,7 +371,7 @@ def main():
             text_player = font.render(f"Jugador: ({int(player_pos[0])}, {int(player_pos[1])})", True, (255,0,0))
             screen.blit(text_player, (20, WINDOW_HEIGHT - 30))
             
-            # Panel de información en dos columnas:
+            # Panel de información en dos columnas.
             with lock:
                 total_gente = sum(len(lst) for lst in dust_particles.values())
             info_left = [
@@ -383,7 +396,7 @@ def main():
                 info_right_y += info_surface.get_height() + 5
             
             pygame.display.flip()
-            clock.tick(60)  # Ahora usamos 60 fps para mayor fluidez.
+            clock.tick(60)
             
             with lock:
                 if current_dust_stop_event.is_set() and sum(len(lst) for lst in dust_particles.values()) == 0:
@@ -395,17 +408,17 @@ def main():
         if game_over:
             break
         
-        # Pantallazo de nivel completado: pintar la pantalla de negro y mostrar el mensaje centrado.
+        # Pantallazo de nivel completado: se pinta la pantalla de negro y se muestra el mensaje centrado.
         if running:
             screen.fill((0, 0, 0))
             level_msg = font.render(f"Nivel {level} completado!", True, (0,255,255))
-            screen.blit(level_msg, (WINDOW_WIDTH//2 - level_msg.get_width()//2, 
+            screen.blit(level_msg, (WINDOW_WIDTH//2 - level_msg.get_width()//2,
                                      WINDOW_HEIGHT//2 - level_msg.get_height()//2))
             pygame.display.flip()
             time.sleep(2)
         level += 1
     
-    # Pantalla final si el jugador aplasta al mosquito.
+    # Pantalla final: si el jugador ha aplastado al mosquito.
     if game_over:
         screen.fill((0,0,0))
         win_msg = font.render("¡Has eliminado al mosquito!", True, (0,255,0))
