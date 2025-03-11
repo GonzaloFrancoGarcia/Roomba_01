@@ -203,7 +203,7 @@ def main():
     
     # Cargar sprites.
     mosquito_sprite = pygame.image.load("mosquito.png").convert_alpha()
-    player_sprite = pygame.image.load("chancla.png").convert_alpha()
+    player_sprite = pygame.image.load("slipper.png").convert_alpha()
     sleeping_sprite = pygame.image.load("sleeping.png").convert_alpha()
     mosquito_size = (10, 10)
     player_size = (20, 20)
