@@ -3,19 +3,18 @@ import threading
 import time
 import json
 import pygame
-from roomba import RoombaWorld   # Asegúrate de que roomba.py exporte la clase RoombaWorld
+from roomba import RoombaWorld  # Se importa la clase que gestiona la lógica del mundo
 
 def manejar_cliente(conn, addr, world):
     """
-    Se ejecuta en cada hilo para atender a un cliente: 
-      - Envía periódicamente el estado actual del mundo (en JSON).
-      - Recibe comandos de control (por ejemplo, para ajustar el movimiento).
+    Hilo por cliente: Envía periódicamente el estado del mundo (JSON).
+    En esta versión se ignoran los comandos entrantes para que la simulación (mosquito)
+    no se vea afectada por el input del cliente.
     """
     print(f"Conexión establecida con {addr}")
     conn.settimeout(1.0)
     try:
         while True:
-            # Con lock, obtener una copia del estado actual del mundo.
             with world.lock:
                 state_to_send = {
                     "mosquito_pos": world.mosquito_pos,
@@ -31,23 +30,12 @@ def manejar_cliente(conn, addr, world):
                 print(f"Error enviando datos a {addr}: {e}")
                 break
 
-            # Se intenta recibir comandos que modifiquen, por ejemplo, la dirección.
+            # Se reciben y se ignoran comandos, para que la simulación siga inalterada.
             try:
                 data = conn.recv(1024)
                 if data:
-                    comando = data.decode().strip()
-                    print(f"Comando recibido de {addr}: {comando}")
-                    with world.lock:
-                        if comando == "MOVE LEFT":
-                            world.mosquito_vel[0] = -abs(world.mosquito_vel[0])
-                        elif comando == "MOVE RIGHT":
-                            world.mosquito_vel[0] = abs(world.mosquito_vel[0])
-                        elif comando == "MOVE UP":
-                            world.mosquito_vel[1] = -abs(world.mosquito_vel[1])
-                        elif comando == "MOVE DOWN":
-                            world.mosquito_vel[1] = abs(world.mosquito_vel[1])
+                    print(f"Comando recibido (ignorando) de {addr}: {data.decode().strip()}")
                 else:
-                    # Si data está vacío, se asume que el cliente cerró la conexión.
                     break
             except socket.timeout:
                 pass
@@ -62,7 +50,7 @@ def manejar_cliente(conn, addr, world):
 
 def iniciar_servidor(world, host="127.0.0.1", puerto=8809):
     """
-    Crea un socket TCP y lanza un hilo por cada cliente que se conecte.
+    Configura el socket TCP y lanza un hilo para cada cliente conectado.
     """
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -73,30 +61,29 @@ def iniciar_servidor(world, host="127.0.0.1", puerto=8809):
     try:
         while True:
             conn, addr = server_socket.accept()
-            hilo = threading.Thread(target=manejar_cliente, args=(conn, addr, world), daemon=True)
-            hilo.start()
+            threading.Thread(target=manejar_cliente, args=(conn, addr, world), daemon=True).start()
     except KeyboardInterrupt:
         print("Servidor detenido por el usuario.")
     finally:
         server_socket.close()
 
 def main():
-    # Inicializar pygame y el mixer, ya que la lógica de RoombaWorld utiliza sonidos.
+    # Inicializar pygame y el mixer necesarios para la simulación
     pygame.init()
     pygame.mixer.init()
-    
-    # Cargar el sonido que se usará en la simulación.
+
+    # Cargar el sonido para "mosquito_bite"
     bite_sound = pygame.mixer.Sound("mosquito_bite.mp3")
     bite_sound.set_volume(1.0)
     
-    # Crear la instancia del mundo de simulación (RoombaWorld)
+    # Instanciar el mundo de simulación
     world = RoombaWorld(window_size=(600,600), tasa_limpeza=1000, velocidad_base=10)
     
-    # Iniciar el hilo que actualiza el movimiento del mosquito.
+    # Iniciar el hilo de movimiento del mosquito
     mosquito_thread = threading.Thread(target=world.mover_mosquito, args=(bite_sound,), daemon=True)
     mosquito_thread.start()
     
-    # Iniciar hilos para generar "dust"/partículas en cada zona.
+    # Iniciar hilos para generar partículas ("dust") en cada zona
     dust_stop_events = {}
     dust_threads = []
     for zona in world.zonas:
@@ -106,10 +93,10 @@ def main():
         t.start()
         dust_threads.append(t)
     
-    # Iniciar el servidor TCP para enviar el estado del mundo y recibir comandos.
+    # Iniciar el servidor TCP que envía el estado del mundo
     iniciar_servidor(world, host="127.0.0.1", puerto=8809)
     
-    # Al final, al interrumpir la aplicación, detener todos los hilos.
+    # Si se interrumpe, detener hilos
     world.mosquito_stop_event.set()
     for e in dust_stop_events.values():
         e.set()
