@@ -37,7 +37,7 @@ def find_zone(x, y, zone_rects):
     """
     for zone, rect in zone_rects.items():
         rx, ry, rw, rh = rect
-        if rx <= x <= rx + rw and ry <= y <= ry + rh:
+        if rx <= x <= rx+rw and ry <= y <= ry+rh:
             return zone
     return None
 
@@ -51,7 +51,7 @@ def main():
         print("No se pudo conectar al servidor:", e)
         return
 
-    # Inicia el hilo receptor para leer el estado del mundo desde el servidor.
+    # Inicia el hilo receptor para obtener el estado del mundo desde el servidor.
     receptor = threading.Thread(target=recibir_estado, args=(client_socket,), daemon=True)
     receptor.start()
 
@@ -62,7 +62,7 @@ def main():
     clock = pygame.time.Clock()
     font = pygame.font.SysFont(None, 16)
     
-    # Definimos un diccionario fijo para las zonas (como en roomba.py)
+    # Diccionario fijo de zonas (como en roomba.py)
     fixed_zone_rects = {
         "Zona 1": (50, 41, 500, 150),
         "Zona 2": (50, 190, 101, 220),
@@ -72,10 +72,10 @@ def main():
     
     # Cargar recursos gráficos
     mosquito_sprite = pygame.image.load("mosquito.png").convert_alpha()
-    player_sprite   = pygame.image.load("slipper.png").convert_alpha()  # Jugador (chancla)
+    player_sprite   = pygame.image.load("slipper.png").convert_alpha()  # Chancla (jugador)
     sleeping_sprite = pygame.image.load("sleeping.png").convert_alpha()
     
-    # Ajustar tamaños de sprites según lo esperado:
+    # Ajustar tamaños
     mosquito_size = (10, 10)
     player_size   = (20, 20)
     sleeping_size = (30, 30)
@@ -83,13 +83,13 @@ def main():
     player_sprite   = pygame.transform.scale(player_sprite, player_size)
     sleeping_sprite = pygame.transform.scale(sleeping_sprite, sleeping_size)
     
-    # Inicializar la posición del jugador. Para fomentar movimientos entre zonas (1,2,3),
-    # ubicamos el centro en una posición que pertenezca a, por ejemplo, Zona 1.
-    player_pos = [100, 100]  
+    # Posición inicial del jugador (centro)
+    player_pos = [100, 100]
     player_speed = 5
     
-    # Determinar la zona en la que se encuentra inicialmente el jugador
-    current_zone = find_zone(player_pos[0], player_pos[1], fixed_zone_rects)
+    # Inicialmente, sin interpolación, establecemos la posición mostrada del mosquito
+    displayed_mosquito_pos = [300, 300]
+    alpha = 0.2  # Factor de interpolación (entre 0 y 1)
     
     running = True
     while running:
@@ -97,7 +97,7 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
         
-        # Detectar teclas para mover al jugador (chancla)
+        # Movimiento local del jugador (chancla)
         keys = pygame.key.get_pressed()
         dx, dy = 0, 0
         if keys[pygame.K_LEFT]:
@@ -108,43 +108,42 @@ def main():
             dy = -player_speed
         if keys[pygame.K_DOWN]:
             dy = player_speed
-        
-        # Calcular la posición candidata para el centro del jugador.
         candidate_x = player_pos[0] + dx
         candidate_y = player_pos[1] + dy
         
-        # Verificar en qué zona caería el centro candidato.
-        candidate_zone = find_zone(candidate_x, candidate_y, fixed_zone_rects)
-        # Si se encuentra una zona, se actualiza el jugador y se permite la transición de zona.
-        if candidate_zone is not None:
+        # Actualizar posición sólo si el centro candidato está en alguna zona
+        if find_zone(candidate_x, candidate_y, fixed_zone_rects) is not None:
             player_pos[0] = candidate_x
             player_pos[1] = candidate_y
-            current_zone = candidate_zone  # Actualizamos la zona actual del jugador.
-        # Sino, no se actualiza la posición, manteniendo la restricción.
         
         screen.fill((0, 0, 0))
         
-        # Obtener el estado del mundo del servidor (o usar valores predeterminados)
+        # Obtener estado del servidor
         with state_lock:
             current_state = server_state
         if current_state is not None:
-            mosquito_pos = current_state.get("mosquito_pos", [300,300])
+            mosquito_server_pos = current_state.get("mosquito_pos", [300,300])
             dust_particles = current_state.get("dust_particles", {})
             level = current_state.get("level", 1)
             zone_rects = current_state.get("zone_rects", fixed_zone_rects)
         else:
-            mosquito_pos = [300,300]
+            mosquito_server_pos = [300,300]
             dust_particles = {}
             level = 1
             zone_rects = fixed_zone_rects
         
-        # Dibujar el sprite del mosquito
+        # Interpolar la posición mostrada del mosquito:
+        # displayed = displayed + alpha * (server_pos - displayed)
+        displayed_mosquito_pos[0] += alpha * (mosquito_server_pos[0] - displayed_mosquito_pos[0])
+        displayed_mosquito_pos[1] += alpha * (mosquito_server_pos[1] - displayed_mosquito_pos[1])
+        
+        # Dibujar el mosquito usando el sprite, en la posición interpolada.
         screen.blit(mosquito_sprite, (
-            int(mosquito_pos[0]) - mosquito_size[0] // 2,
-            int(mosquito_pos[1]) - mosquito_size[1] // 2)
+            int(displayed_mosquito_pos[0]) - mosquito_size[0]//2,
+            int(displayed_mosquito_pos[1]) - mosquito_size[1]//2)
         )
         
-        # Dibujar cada zona y sus partículas ("gente durmiendo")
+        # Dibujar zonas y partículas ("gente durmiendo")
         for zona, rect in zone_rects.items():
             pygame.draw.rect(screen, (70,70,200), rect, 2)
             zone_text = font.render(zona, True, (200,200,200))
@@ -155,14 +154,14 @@ def main():
             for (x, y) in dust_particles.get(zona, []):
                 screen.blit(sleeping_sprite, (x - sleeping_size[0]//2, y - sleeping_size[1]//2))
         
-        # Mostrar el nivel
+        # Mostrar el nivel en pantalla
         level_text = font.render(f"Nivel: {level}", True, (255,255,255))
         screen.blit(level_text, (10, 10))
         
         # Dibujar el sprite del jugador (chancla)
         screen.blit(player_sprite, (
-            int(player_pos[0]) - player_size[0] // 2,
-            int(player_pos[1]) - player_size[1] // 2)
+            int(player_pos[0]) - player_size[0]//2,
+            int(player_pos[1]) - player_size[1]//2)
         )
         
         pygame.display.flip()
